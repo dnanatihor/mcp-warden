@@ -28,6 +28,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     serve.set_defaults(handler=_serve)
 
+    check = subcommands.add_parser(
+        "check-policy",
+        help="Validate policy and print the decision matrix",
+    )
+    check.add_argument("-c", "--config", required=True, type=Path)
+    check.set_defaults(handler=_check_policy)
+
     args = parser.parse_args(argv)
     handler = args.handler
     return int(handler(args))
@@ -37,6 +44,25 @@ def _hash_key(args: argparse.Namespace) -> int:
     del args
     digest = hash_api_key(sys.stdin.buffer.read())
     sys.stdout.write(f"{digest}\n")
+    return 0
+
+
+def _check_policy(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from mcp_warden.config import ConfigError, load_config
+    from mcp_warden.core.native import PolicyError
+    from mcp_warden.matrix import render_decision_matrix
+    from mcp_warden.principals import PrincipalError, load_principals
+
+    try:
+        config = load_config(args.config)
+        directory = load_principals(config.principals_file)
+        matrix = asyncio.run(render_decision_matrix(config, directory))
+    except (ConfigError, PolicyError, PrincipalError) as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
+    sys.stdout.write(matrix)
     return 0
 
 
