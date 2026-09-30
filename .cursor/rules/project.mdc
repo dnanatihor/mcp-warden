@@ -1,0 +1,22 @@
+---
+description: Engineering rules for mcp-warden (generated from SPEC.md by the portfolio bootstrap)
+globs:
+alwaysApply: true
+---
+
+# Shared rules
+
+- SPEC.md is the source of truth. Implement only the phase you are asked to implement.
+- Python 3.11+, uv, full type hints, mypy --strict on src/, ruff format and ruff check.
+- Write tests first wherever SPEC.md gives expected outputs.
+- No network access in tests; LLMs and external APIs are stubbed.
+- Never log or commit secrets. Never commit real personal data.
+- Record significant decisions and spike outcomes as ADRs in docs/adr/ using the template there.
+- If SPEC.md is ambiguous, stop and list the ambiguity; do not invent behaviour.
+
+# Project rules (from SPEC.md, Appendix A)
+
+- Default deny. Any error in authentication or policy evaluation results in DENY.
+- Decision and obligation logic stay pure and framework-independent (src/mcp_warden/core/).
+- Never log API keys, raw arguments, or raw responses.
+- Every tools/list and tools/call request writes exactly one audit record through the single writer.

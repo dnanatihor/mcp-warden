@@ -1,0 +1,47 @@
+[project]
+name = "mcp-warden"
+version = "0.1.0"
+description = "Policy-enforcing gateway between AI agents and MCP servers"
+authors = [
+    { name = "Rohit Anand" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.14,<3",
+    "pydantic>=2",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+mcp-warden = "mcp_warden.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["mcp_warden"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff==0.16.4",
+    "types-pyyaml>=6.0.12.20260906",
+]
