@@ -56,6 +56,12 @@ class PrincipalDirectory:
     def principals(self) -> tuple[Principal, ...]:
         return self._principals
 
+    def by_id(self, principal_id: str) -> Principal | None:
+        for principal in self._principals:
+            if principal.id == principal_id:
+                return principal
+        return None
+
     def lookup(self, api_key: str) -> Principal | None:
         digest = hash_api_key(api_key.encode("utf-8"))
         found: Principal | None = None

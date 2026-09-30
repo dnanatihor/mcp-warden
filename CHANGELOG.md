@@ -10,3 +10,4 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - Repository created from SPEC.md.
 - Config models, principals loader, `mcp-warden hash-key`, and stdio fixture upstreams.
+- Pass-through gateway with bearer authentication, namespaced upstream tools, and ADR-0001.
