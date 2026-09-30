@@ -7,6 +7,7 @@ and denies ``tools/call``.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Sequence
@@ -34,8 +35,9 @@ from mcp_warden.config import (
     UpstreamConfig,
     WardenConfig,
 )
-from mcp_warden.core.models import Decision, DecisionRequest
+from mcp_warden.core.models import Decision, DecisionRequest, Obligation
 from mcp_warden.core.native import NativePolicyEngine, load_native_policy
+from mcp_warden.core.obligations import apply_obligations, render_json_text
 from mcp_warden.principals import Principal, PrincipalDirectory
 
 logger = logging.getLogger("mcp_warden.gateway")
@@ -94,7 +96,8 @@ class AllowAllGate(Middleware):
         if decision.effect != "ALLOW":
             raise ToolError(_deny_message(decision))
         await _validate_arguments(context, arguments)
-        return await call_next(context)
+        result = await call_next(context)
+        return _apply_result_obligations(result, decision.obligations)
 
     async def on_list_resources(
         self,
@@ -174,7 +177,7 @@ class UpstreamPolicyGate(Middleware):
                 )
             )
             if decision.effect == "ALLOW":
-                visible.append(tool)
+                visible.append(_with_governance_note(tool, decision.obligations))
         return visible
 
 
@@ -312,6 +315,62 @@ async def _validate_arguments(
         location = ".".join(str(part) for part in exc.absolute_path)
         detail = f": {location}" if location else ""
         raise ToolError(f"invalid arguments{detail}") from None
+
+
+_GOVERNANCE_NOTE = "Governance: AI inferences may be withheld."
+
+
+def _apply_result_obligations(
+    result: ToolResult, obligations: tuple[Obligation, ...]
+) -> ToolResult:
+    if not obligations:
+        return result
+    structured = result.structured_content
+    transformed = apply_obligations(structured, obligations) if structured is not None else None
+    content: list[Any] = []
+    for block in result.content or []:
+        text = getattr(block, "text", None)
+        if not isinstance(text, str):
+            content.append(block)
+            continue
+        parsed = _json_block(text)
+        if parsed is not None:
+            rendered = apply_obligations(parsed, obligations).value
+            content.append(mt.TextContent(type="text", text=render_json_text(rendered)))
+            continue
+        masked = apply_obligations(text, obligations).value
+        content.append(
+            mt.TextContent(type="text", text=masked if isinstance(masked, str) else text)
+        )
+    new_structured = transformed.value if transformed is not None else structured
+    if isinstance(new_structured, dict) or new_structured is None:
+        return ToolResult(content=content, structured_content=new_structured, meta=result.meta)
+    return ToolResult(
+        content=content, structured_content={"result": new_structured}, meta=result.meta
+    )
+
+
+def _json_block(text: str) -> Any:
+    stripped = text.strip()
+    if not stripped.startswith(("{", "[")):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict | list):
+        return parsed
+    return None
+
+
+def _with_governance_note(tool: Tool, obligations: tuple[Obligation, ...]) -> Tool:
+    if not any(item.type == "strip_inferences" for item in obligations):
+        return tool
+    description = tool.description or ""
+    if _GOVERNANCE_NOTE in description:
+        return tool
+    updated = f"{description}\n{_GOVERNANCE_NOTE}".strip()
+    return tool.model_copy(update={"description": updated})
 
 
 def _deny_message(decision: Decision) -> str:

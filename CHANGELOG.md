@@ -12,3 +12,4 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Config models, principals loader, `mcp-warden hash-key`, and stdio fixture upstreams.
 - Pass-through gateway with bearer authentication, namespaced upstream tools, and ADR-0001.
 - Native YAML policy engine, enforced tool visibility, and `mcp-warden check-policy`.
+- Response obligations: field redaction, inference stripping, PII masking, and result truncation.

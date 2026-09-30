@@ -106,6 +106,7 @@ async def test_deny_and_visibility_rows(tmp_path: Path) -> None:
                     "catalog__get_column_profile",
                     {"column_id": "col_email"},
                 )
+                search = await analyst.call_tool("catalog__search_assets", {"query": "customer"})
                 with pytest.raises(ToolError, match="invalid arguments"):
                     await analyst.call_tool("catalog__get_column_profile", {})
                 with pytest.raises(ToolError, match="no-destructive") as denied_delete:
@@ -114,6 +115,10 @@ async def test_deny_and_visibility_rows(tmp_path: Path) -> None:
                     await analyst.call_tool("admin__list_jobs", {})
             async with Client(url, auth=_STEWARD_KEY) as steward:
                 steward_tools = sorted(tool.name for tool in await steward.list_tools())
+                steward_profile = await steward.call_tool(
+                    "catalog__get_column_profile",
+                    {"column_id": "col_email"},
+                )
                 with pytest.raises(ToolError, match="no-destructive") as steward_delete:
                     await steward.call_tool("admin__delete_asset", {"asset_id": "asset-1"})
             async with Client(url, auth=_ROGUE_KEY) as rogue:
@@ -123,7 +128,14 @@ async def test_deny_and_visibility_rows(tmp_path: Path) -> None:
 
     catalog_tools = ["catalog__get_column_profile", "catalog__search_assets"]
     assert analyst_tools == catalog_tools
-    assert "ada@finance.example" in str(profile.data)
+    assert profile.data["profiling_observations"][0]["value"] == "«email»"
+    assert profile.data["ai_inferences"] == []
+    assert profile.data["inference_permitted"] is False
+    assert len(search.data["results"]) == 50
+    assert search.data["_warden_truncated"] is True
+    assert steward_profile.data["profiling_observations"][0]["value"] == "«email»"
+    assert len(steward_profile.data["ai_inferences"]) == 1
+    assert steward_profile.data["inference_permitted"] is True
     assert steward_tools == catalog_tools
     assert rogue_tools == []
     assert "Destructive tools are blocked through the gateway." in str(denied_delete.value)
