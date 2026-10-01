@@ -1,0 +1,23 @@
+default: deny
+rules:
+  - id: no-destructive
+    effect: deny
+    actions: [call]
+    tools: {annotations: {destructiveHint: true}}
+    reason: Destructive tools are blocked through the gateway.
+  - id: analysts-read-catalog
+    effect: allow
+    actions: [list, call]
+    principals: {roles: [analyst]}
+    tools: {servers: [catalog], annotations: {readOnlyHint: true}}
+    obligations:
+      - {type: mask_pii}
+      - {type: strip_inferences}
+      - {type: max_items, n: 50}
+  - id: stewards-read-catalog
+    effect: allow
+    actions: [list, call]
+    principals: {roles: [steward]}
+    tools: {servers: [catalog], annotations: {readOnlyHint: true}}
+    obligations:
+      - {type: mask_pii}

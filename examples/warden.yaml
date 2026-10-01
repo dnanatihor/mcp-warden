@@ -1,0 +1,10 @@
+listen: {transport: streamable_http, host: 127.0.0.1, port: 8900, path: /mcp}
+principals_file: ./principals.yaml
+policy: {engine: native, file: ./policy.yaml}
+upstreams:
+  catalog: {transport: stdio, command: python, args: ["-m", "examples.catalog_server"]}
+  admin: {transport: stdio, command: python, args: ["-m", "examples.admin_server"]}
+tools_cache_ttl_s: 60
+upstream_timeout_s: 30
+audit: {file: ../audit/warden.jsonl, anchor_every: 100, store_masked_arguments: false}
+telemetry: {otel: false}

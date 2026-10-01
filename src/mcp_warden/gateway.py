@@ -45,6 +45,7 @@ from mcp_warden.core.native import NativePolicyEngine, PolicyEngine, load_native
 from mcp_warden.core.obligations import ObligationResult, apply_obligations, render_json_text
 from mcp_warden.core.opa import OpaPolicyEngine
 from mcp_warden.principals import Principal, PrincipalDirectory
+from mcp_warden.telemetry import record_decision
 
 logger = logging.getLogger("mcp_warden.gateway")
 
@@ -71,11 +72,13 @@ class AllowAllGate(Middleware):
         allow_all: bool,
         engine: PolicyEngine | None = None,
         audit: AuditWriter,
+        otel: bool = False,
     ) -> None:
         self._directory = directory
         self._allow_all = allow_all
         self._engine = engine
         self._audit = audit
+        self._otel = otel
 
     async def on_list_tools(
         self,
@@ -147,6 +150,13 @@ class AllowAllGate(Middleware):
                         annotations=await _call_annotations(context),
                         arguments=arguments,
                     )
+                )
+                record_decision(
+                    self._otel,
+                    action="call",
+                    server=server,
+                    tool=tool,
+                    decision=decision,
                 )
                 if decision.effect != "ALLOW":
                     raise ToolError(_deny_message(decision))
@@ -234,11 +244,13 @@ class UpstreamPolicyGate(Middleware):
         *,
         allow_all: bool,
         engine: PolicyEngine | None,
+        otel: bool = False,
     ) -> None:
         self._server = server
         self._directory = directory
         self._allow_all = allow_all
         self._engine = engine
+        self._otel = otel
 
     async def on_list_tools(
         self,
@@ -268,6 +280,13 @@ class UpstreamPolicyGate(Middleware):
                     tool=tool.name,
                     annotations=_annotation_map(tool.annotations),
                 )
+            )
+            record_decision(
+                self._otel,
+                action="list",
+                server=self._server,
+                tool=tool.name,
+                decision=decision,
             )
             if decision.effect == "ALLOW":
                 visible.append(_with_governance_note(tool, decision.obligations))
@@ -301,11 +320,25 @@ def build_gateway(
     for name, upstream in config.upstreams.items():
         proxy = FastMCPProxy(client_factory=_client_factory(upstream, config), name=name)
         proxy.add_middleware(
-            UpstreamPolicyGate(name, directory, allow_all=allow_all, engine=engine)
+            UpstreamPolicyGate(
+                name,
+                directory,
+                allow_all=allow_all,
+                engine=engine,
+                otel=config.telemetry.otel,
+            )
         )
         # FastMCP joins "{prefix}_{tool}". A trailing underscore yields "{server}__{tool}".
         gateway.mount(proxy, prefix=f"{name}_")
-    gateway.add_middleware(AllowAllGate(directory, allow_all=allow_all, engine=engine, audit=audit))
+    gateway.add_middleware(
+        AllowAllGate(
+            directory,
+            allow_all=allow_all,
+            engine=engine,
+            audit=audit,
+            otel=config.telemetry.otel,
+        )
+    )
     return gateway
 
 

@@ -10,6 +10,7 @@ dependencies = [
     "fastmcp>=2.14,<3",
     "httpx>=0.28.1",
     "jsonschema>=4.26.0",
+    "opentelemetry-api>=1.45.0",
     "pydantic>=2",
     "pyyaml>=6.0.3",
 ]
@@ -46,6 +47,7 @@ pythonpath = ["."]
 [dependency-groups]
 dev = [
     "mypy>=2.3.1",
+    "opentelemetry-sdk>=1.45.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff==0.16.4",

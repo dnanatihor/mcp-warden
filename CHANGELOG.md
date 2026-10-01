@@ -15,4 +15,5 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Response obligations: field redaction, inference stripping, PII masking, and result truncation.
 - Hash-chained JSONL audit log, anchoring, and `mcp-warden verify-log`.
 - Optional OPA policy engine, `policies/example.rego`, and an OPA sidecar in docker-compose.
+- Optional OpenTelemetry decision spans, fixture quickstart, and the project README.
 - Hash-chained JSONL audit log, `mcp-warden verify-log`, and stdout hash anchors.
