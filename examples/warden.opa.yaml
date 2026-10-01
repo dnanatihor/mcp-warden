@@ -1,0 +1,7 @@
+listen: {transport: streamable_http, host: 0.0.0.0, port: 8900, path: /mcp}
+principals_file: ./examples/principals.yaml
+policy: {engine: opa, url: http://opa:8181, package: mcpwarden/decision}
+upstreams:
+  catalog: {transport: stdio, command: python, args: ["-m", "examples.catalog_server"]}
+  admin: {transport: stdio, command: python, args: ["-m", "examples.admin_server"]}
+audit: {file: ./audit/warden.jsonl, anchor_every: 100, store_masked_arguments: false}

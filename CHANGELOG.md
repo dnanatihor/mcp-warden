@@ -14,4 +14,5 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Native YAML policy engine, enforced tool visibility, and `mcp-warden check-policy`.
 - Response obligations: field redaction, inference stripping, PII masking, and result truncation.
 - Hash-chained JSONL audit log, anchoring, and `mcp-warden verify-log`.
+- Optional OPA policy engine, `policies/example.rego`, and an OPA sidecar in docker-compose.
 - Hash-chained JSONL audit log, `mcp-warden verify-log`, and stdout hash anchors.

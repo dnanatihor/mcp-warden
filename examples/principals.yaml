@@ -1,0 +1,12 @@
+# Fixture principals. The keys are the test values analyst-secret, steward-secret,
+# and rogue-secret. Replace the hashes before pointing this file at real agents.
+principals:
+  - id: analyst-agent
+    key_sha256: "dee3b81e0a480f7d88c15b8239f18e77f3107918874e499912f210bbdac288a9"
+    attributes: {roles: [analyst], team: finance, clearance: internal}
+  - id: steward-agent
+    key_sha256: "2e5f9bb6d93ed671ebeee5f62cdfabaffb06821baa7154cd857ccc1f52e81599"
+    attributes: {roles: [steward], team: governance, clearance: confidential}
+  - id: rogue-agent
+    key_sha256: "d6b2336e7c65b920da242712b88151ec0517166a08ca630b186586627eef0086"
+    attributes: {}

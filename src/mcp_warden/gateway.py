@@ -32,7 +32,6 @@ from fastmcp.tools.tool import Tool, ToolResult
 from mcp_warden.auditlog import AuditWriter, StdoutAnchorSink
 from mcp_warden.auth import PrincipalTokenVerifier
 from mcp_warden.config import (
-    ConfigError,
     HttpListen,
     OpaPolicyConfig,
     StdioUpstream,
@@ -42,8 +41,9 @@ from mcp_warden.config import (
 )
 from mcp_warden.core.audit import canonical_json, utc_timestamp
 from mcp_warden.core.models import Decision, DecisionRequest, Obligation
-from mcp_warden.core.native import NativePolicyEngine, load_native_policy
+from mcp_warden.core.native import NativePolicyEngine, PolicyEngine, load_native_policy
 from mcp_warden.core.obligations import ObligationResult, apply_obligations, render_json_text
+from mcp_warden.core.opa import OpaPolicyEngine
 from mcp_warden.principals import Principal, PrincipalDirectory
 
 logger = logging.getLogger("mcp_warden.gateway")
@@ -69,7 +69,7 @@ class AllowAllGate(Middleware):
         directory: PrincipalDirectory,
         *,
         allow_all: bool,
-        engine: NativePolicyEngine | None = None,
+        engine: PolicyEngine | None = None,
         audit: AuditWriter,
     ) -> None:
         self._directory = directory
@@ -233,7 +233,7 @@ class UpstreamPolicyGate(Middleware):
         directory: PrincipalDirectory,
         *,
         allow_all: bool,
-        engine: NativePolicyEngine | None,
+        engine: PolicyEngine | None,
     ) -> None:
         self._server = server
         self._directory = directory
@@ -309,9 +309,13 @@ def build_gateway(
     return gateway
 
 
-def load_policy_engine(config: WardenConfig) -> NativePolicyEngine:
+def load_policy_engine(config: WardenConfig) -> PolicyEngine:
     if isinstance(config.policy, OpaPolicyConfig):
-        raise ConfigError("OPA policy engine is not available")
+        return OpaPolicyEngine(
+            config.policy.url,
+            config.policy.package,
+            timeout=config.upstream_timeout_s,
+        )
     return NativePolicyEngine(load_native_policy(config.policy.file))
 
 

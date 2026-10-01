@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.14,<3",
+    "httpx>=0.28.1",
     "jsonschema>=4.26.0",
     "pydantic>=2",
     "pyyaml>=6.0.3",
@@ -24,6 +25,10 @@ build-backend = "uv_build"
 target-version = "py311"
 line-length = 100
 src = ["src", "tests", "examples"]
+
+[tool.ruff.format]
+# SPEC.md is the source of truth; do not reflow its fenced examples.
+exclude = ["SPEC.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

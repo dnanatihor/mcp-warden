@@ -6,7 +6,7 @@ from typing import Literal
 
 from mcp_warden.config import WardenConfig
 from mcp_warden.core.models import DecisionRequest
-from mcp_warden.core.native import NativePolicyEngine
+from mcp_warden.core.native import PolicyEngine
 from mcp_warden.gateway import UpstreamTool, list_upstream_tools, load_policy_engine
 from mcp_warden.principals import Principal, PrincipalDirectory
 
@@ -23,7 +23,7 @@ async def render_decision_matrix(config: WardenConfig, directory: PrincipalDirec
 
 
 async def _row(
-    engine: NativePolicyEngine,
+    engine: PolicyEngine,
     principal: Principal,
     tool: UpstreamTool,
     action: Literal["list", "call"],

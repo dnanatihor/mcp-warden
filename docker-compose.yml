@@ -1,0 +1,20 @@
+services:
+  opa:
+    image: openpolicyagent/opa:1.0.0
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies/example.rego"]
+    volumes:
+      - ./policies/example.rego:/policies/example.rego:ro
+    ports:
+      - "127.0.0.1:8181:8181"
+  warden:
+    image: ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    depends_on:
+      - opa
+    environment:
+      WARDEN_PRINCIPAL: ""
+    command: ["uv", "run", "--no-dev", "mcp-warden", "serve", "-c", "examples/warden.opa.yaml"]
+    ports:
+      - "127.0.0.1:8900:8900"
