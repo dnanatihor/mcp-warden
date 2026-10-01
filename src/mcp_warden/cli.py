@@ -35,6 +35,13 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("-c", "--config", required=True, type=Path)
     check.set_defaults(handler=_check_policy)
 
+    verify = subcommands.add_parser(
+        "verify-log",
+        help="Recompute the audit hash chain",
+    )
+    verify.add_argument("file", type=Path)
+    verify.set_defaults(handler=_verify_log)
+
     args = parser.parse_args(argv)
     handler = args.handler
     return int(handler(args))
@@ -64,6 +71,17 @@ def _check_policy(args: argparse.Namespace) -> int:
         return 1
     sys.stdout.write(matrix)
     return 0
+
+
+def _verify_log(args: argparse.Namespace) -> int:
+    from mcp_warden.core.audit import verify_log
+
+    broken = verify_log(args.file.read_text(encoding="utf-8"))
+    if broken is None:
+        sys.stdout.write("OK\n")
+        return 0
+    sys.stdout.write(f"seq {broken}\n")
+    return 1
 
 
 def _serve(args: argparse.Namespace) -> int:

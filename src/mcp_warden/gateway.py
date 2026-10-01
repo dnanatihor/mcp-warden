@@ -7,10 +7,14 @@ and denies ``tools/call``.
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import json
 import logging
 import os
-from collections.abc import Sequence
+import time
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +29,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.server.proxy import FastMCPProxy
 from fastmcp.tools.tool import Tool, ToolResult
 
+from mcp_warden.auditlog import AuditWriter, StdoutAnchorSink
 from mcp_warden.auth import PrincipalTokenVerifier
 from mcp_warden.config import (
     ConfigError,
@@ -35,12 +40,25 @@ from mcp_warden.config import (
     UpstreamConfig,
     WardenConfig,
 )
+from mcp_warden.core.audit import canonical_json, utc_timestamp
 from mcp_warden.core.models import Decision, DecisionRequest, Obligation
 from mcp_warden.core.native import NativePolicyEngine, load_native_policy
-from mcp_warden.core.obligations import apply_obligations, render_json_text
+from mcp_warden.core.obligations import ObligationResult, apply_obligations, render_json_text
 from mcp_warden.principals import Principal, PrincipalDirectory
 
 logger = logging.getLogger("mcp_warden.gateway")
+
+
+class _ListTally:
+    def __init__(self) -> None:
+        self.visible = 0
+        self.hidden = 0
+
+
+_LIST_TALLY: contextvars.ContextVar[_ListTally | None] = contextvars.ContextVar(
+    "mcp_warden_list_tally",
+    default=None,
+)
 
 
 class AllowAllGate(Middleware):
@@ -52,10 +70,12 @@ class AllowAllGate(Middleware):
         *,
         allow_all: bool,
         engine: NativePolicyEngine | None = None,
+        audit: AuditWriter,
     ) -> None:
         self._directory = directory
         self._allow_all = allow_all
         self._engine = engine
+        self._audit = audit
 
     async def on_list_tools(
         self,
@@ -65,8 +85,33 @@ class AllowAllGate(Middleware):
         principal = self._principal()
         if principal is None:
             return []
-        # Mounted-server middleware applies the policy to unprefixed names.
-        return await call_next(context)
+        started = time.perf_counter()
+        tally = _ListTally()
+        token = _LIST_TALLY.set(tally)
+        status = "error"
+        try:
+            tools = await call_next(context)
+            status = "ok"
+        except Exception:
+            logger.warning("tool list failed")
+            tools = []
+        finally:
+            _LIST_TALLY.reset(token)
+        await self._audit.append(
+            {
+                "ts": utc_timestamp(),
+                "principal": principal.id,
+                "action": "list",
+                "visible_tools": tally.visible,
+                "hidden_tools": tally.hidden,
+                "effect": "ALLOW" if status == "ok" else "DENY",
+                "upstream_status": status,
+                "latency_ms": _latency_ms(started),
+            }
+        )
+        if status != "ok":
+            raise ToolError("The gateway denied this tool call.")
+        return tools
 
     async def on_call_tool(
         self,
@@ -76,28 +121,69 @@ class AllowAllGate(Middleware):
         principal = self._principal()
         if principal is None:
             raise ToolError("The gateway denied this tool call.")
-        if self._allow_all:
-            return await call_next(context)
-        parsed = _split_tool_name(context.message.name)
-        if parsed is None or self._engine is None:
-            raise ToolError("unknown tool")
-        server, name = parsed
+        started = time.perf_counter()
         arguments = dict(context.message.arguments or {})
-        decision = await self._engine.decide(
-            DecisionRequest(
-                action="call",
-                principal=principal,
+        parsed = _split_tool_name(context.message.name)
+        server, tool = parsed if parsed else ("", context.message.name)
+        decision = Decision(effect="DENY", rule_ids=(), reason="unknown tool", obligations=())
+        result: ToolResult | None = None
+        applied: tuple[str, ...] = ()
+        skipped: tuple[str, ...] = ()
+        status = "denied"
+        error: Exception | None = None
+        try:
+            if self._allow_all:
+                decision = Decision(effect="ALLOW", rule_ids=(), reason="", obligations=())
+                result = await call_next(context)
+            elif parsed is None or self._engine is None:
+                raise ToolError("unknown tool")
+            else:
+                decision = await self._engine.decide(
+                    DecisionRequest(
+                        action="call",
+                        principal=principal,
+                        server=server,
+                        tool=tool,
+                        annotations=await _call_annotations(context),
+                        arguments=arguments,
+                    )
+                )
+                if decision.effect != "ALLOW":
+                    raise ToolError(_deny_message(decision))
+                await _validate_arguments(context, arguments)
+                result = await call_next(context)
+                result, outcome = _apply_result_obligations(result, decision.obligations)
+                applied = outcome.applied
+                skipped = outcome.not_applicable
+            status = "ok"
+        except ToolError as exc:
+            error = exc
+            status = "denied" if decision.effect != "ALLOW" else "error"
+        except Exception:
+            logger.warning("tool call failed")
+            error = ToolError("The gateway denied this tool call.")
+            status = "error"
+        await self._audit.append(
+            _call_record(
+                principal_id=principal.id,
                 server=server,
-                tool=name,
-                annotations=await _call_annotations(context),
+                tool=tool,
                 arguments=arguments,
+                decision=decision,
+                status=status,
+                latency_ms=_latency_ms(started),
+                result=result,
+                error=error,
+                applied=applied,
+                skipped=skipped,
+                store_masked_arguments=self._audit.store_masked_arguments,
             )
         )
-        if decision.effect != "ALLOW":
-            raise ToolError(_deny_message(decision))
-        await _validate_arguments(context, arguments)
-        result = await call_next(context)
-        return _apply_result_obligations(result, decision.obligations)
+        if error is not None:
+            raise error
+        if result is None:
+            raise ToolError("The gateway denied this tool call.")
+        return result
 
     async def on_list_resources(
         self,
@@ -161,9 +247,16 @@ class UpstreamPolicyGate(Middleware):
     ) -> Sequence[Tool]:
         principal = _current_principal(self._directory)
         tools = await call_next(context)
-        if principal is None or self._allow_all:
-            return [] if principal is None else tools
+        tally = _LIST_TALLY.get()
+        if principal is None:
+            return []
+        if self._allow_all:
+            if tally is not None:
+                tally.visible += len(tools)
+            return tools
         if self._engine is None:
+            if tally is not None:
+                tally.hidden += len(tools)
             return []
         visible: list[Tool] = []
         for tool in tools:
@@ -178,6 +271,9 @@ class UpstreamPolicyGate(Middleware):
             )
             if decision.effect == "ALLOW":
                 visible.append(_with_governance_note(tool, decision.obligations))
+        if tally is not None:
+            tally.visible += len(visible)
+            tally.hidden += len(tools) - len(visible)
         return visible
 
 
@@ -188,7 +284,19 @@ def build_gateway(
     allow_all: bool = False,
 ) -> FastMCP:
     auth = PrincipalTokenVerifier(directory) if isinstance(config.listen, HttpListen) else None
-    gateway = FastMCP("MCP Warden", auth=auth)
+    audit = AuditWriter(
+        config.audit.file,
+        anchor_every=config.audit.anchor_every,
+        sink=StdoutAnchorSink(),
+        store_masked_arguments=config.audit.store_masked_arguments,
+    )
+
+    @asynccontextmanager
+    async def _lifespan(_server: FastMCP[Any]) -> AsyncIterator[dict[str, Any]]:
+        yield {}
+        await audit.aclose()
+
+    gateway: FastMCP[Any] = FastMCP("MCP Warden", auth=auth, lifespan=_lifespan)
     engine = load_policy_engine(config)
     for name, upstream in config.upstreams.items():
         proxy = FastMCPProxy(client_factory=_client_factory(upstream, config), name=name)
@@ -197,7 +305,7 @@ def build_gateway(
         )
         # FastMCP joins "{prefix}_{tool}". A trailing underscore yields "{server}__{tool}".
         gateway.mount(proxy, prefix=f"{name}_")
-    gateway.add_middleware(AllowAllGate(directory, allow_all=allow_all, engine=engine))
+    gateway.add_middleware(AllowAllGate(directory, allow_all=allow_all, engine=engine, audit=audit))
     return gateway
 
 
@@ -322,9 +430,11 @@ _GOVERNANCE_NOTE = "Governance: AI inferences may be withheld."
 
 def _apply_result_obligations(
     result: ToolResult, obligations: tuple[Obligation, ...]
-) -> ToolResult:
+) -> tuple[ToolResult, ObligationResult]:
     if not obligations:
-        return result
+        return result, ObligationResult(
+            value=result.structured_content, applied=(), not_applicable=()
+        )
     structured = result.structured_content
     transformed = apply_obligations(structured, obligations) if structured is not None else None
     content: list[Any] = []
@@ -343,11 +453,65 @@ def _apply_result_obligations(
             mt.TextContent(type="text", text=masked if isinstance(masked, str) else text)
         )
     new_structured = transformed.value if transformed is not None else structured
+    outcome = transformed or ObligationResult(value=new_structured, applied=(), not_applicable=())
     if isinstance(new_structured, dict) or new_structured is None:
-        return ToolResult(content=content, structured_content=new_structured, meta=result.meta)
-    return ToolResult(
-        content=content, structured_content={"result": new_structured}, meta=result.meta
-    )
+        updated = ToolResult(content=content, structured_content=new_structured, meta=result.meta)
+    else:
+        updated = ToolResult(
+            content=content, structured_content={"result": new_structured}, meta=result.meta
+        )
+    return updated, outcome
+
+
+def _latency_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _call_record(
+    *,
+    principal_id: str,
+    server: str,
+    tool: str,
+    arguments: dict[str, Any],
+    decision: Decision,
+    status: str,
+    latency_ms: int,
+    result: ToolResult | None,
+    error: Exception | None,
+    applied: tuple[str, ...],
+    skipped: tuple[str, ...],
+    store_masked_arguments: bool,
+) -> dict[str, Any]:
+    if result is not None and isinstance(result.structured_content, dict):
+        response: Any = result.structured_content
+    elif error is not None:
+        response = {"error": str(error)}
+    else:
+        response = {"error": "tool call failed"}
+    record: dict[str, Any] = {
+        "ts": utc_timestamp(),
+        "principal": principal_id,
+        "action": "call",
+        "server": server,
+        "tool": tool,
+        "arguments_sha256": _sha256(canonical_json(arguments)),
+        "effect": decision.effect,
+        "rule_ids": list(decision.rule_ids),
+        "obligations_applied": list(applied),
+        "obligations_not_applicable": list(skipped),
+        "upstream_status": status,
+        "latency_ms": latency_ms,
+        "response_sha256": _sha256(canonical_json(response)),
+    }
+    if store_masked_arguments:
+        record["masked_arguments"] = apply_obligations(
+            arguments, (Obligation(type="mask_pii"),)
+        ).value
+    return record
 
 
 def _json_block(text: str) -> Any:
