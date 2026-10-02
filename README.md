@@ -3,8 +3,6 @@
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache_2.0-blue)](LICENSE)
 
-<!-- TODO: replace docs/demo.gif with a recording of analyst-agent, steward-agent, and a denied delete -->
-
 ![demo](docs/demo.gif)
 
 ## Why
